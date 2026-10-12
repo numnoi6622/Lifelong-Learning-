@@ -47,6 +47,13 @@ export default function LoginPage() {
 
   const loginWithGoogleMutation = trpc.auth.loginWithGoogle.useMutation({
     onSuccess: async (data) => {
+      try {
+        if ((data as any).sessionToken) {
+          sessionStorage.setItem("manus-cookie", `app_session_id=${(data as any).sessionToken}`);
+        }
+      } catch {
+        // ignore storage errors
+      }
       toast.success(`เข้าสู่ระบบสำเร็จในชื่อ ${data.user.name} (${data.user.email})`);
       await utils.auth.me.invalidate();
       setGoogleModalOpen(false);

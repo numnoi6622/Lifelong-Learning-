@@ -436,19 +436,37 @@ var SDKServer = class {
     const signedInAt = /* @__PURE__ */ new Date();
     let user = await getUserByOpenId(sessionUserId);
     if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
+      if (sessionUserId.startsWith("google:")) {
+        const email = sessionUserId.slice("google:".length);
         await upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+          openId: sessionUserId,
+          name: session.name || email.split("@")[0],
+          email,
+          loginMethod: "google",
           lastSignedIn: signedInAt
         });
-        user = await getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
+        user = await getUserByOpenId(sessionUserId);
+      } else {
+        try {
+          const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
+          await upsertUser({
+            openId: userInfo.openId,
+            name: userInfo.name || null,
+            email: userInfo.email ?? null,
+            loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+            lastSignedIn: signedInAt
+          });
+          user = await getUserByOpenId(userInfo.openId);
+        } catch (error) {
+          await upsertUser({
+            openId: sessionUserId,
+            name: session.name || "\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19",
+            email: sessionUserId.includes("@") ? sessionUserId : null,
+            loginMethod: "session",
+            lastSignedIn: signedInAt
+          });
+          user = await getUserByOpenId(sessionUserId);
+        }
       }
     }
     if (!user) {
@@ -1009,6 +1027,7 @@ var appRouter = router({
       });
       return {
         success: true,
+        sessionToken,
         user: {
           openId,
           name,

@@ -195,6 +195,7 @@ export const appRouter = router({
 
         return {
           success: true,
+          sessionToken,
           user: {
             openId,
             name,

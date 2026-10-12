@@ -288,21 +288,39 @@ class SDKServer {
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
 
-    // If user not in DB, sync from OAuth server automatically
+    // If user not in DB (e.g. serverless cold start), reconstruct from verified JWT session
     if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
+      if (sessionUserId.startsWith("google:")) {
+        const email = sessionUserId.slice("google:".length);
         await db.upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+          openId: sessionUserId,
+          name: session.name || email.split("@")[0],
+          email,
+          loginMethod: "google",
           lastSignedIn: signedInAt,
         });
-        user = await db.getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
+        user = await db.getUserByOpenId(sessionUserId);
+      } else {
+        try {
+          const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
+          await db.upsertUser({
+            openId: userInfo.openId,
+            name: userInfo.name || null,
+            email: userInfo.email ?? null,
+            loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+            lastSignedIn: signedInAt,
+          });
+          user = await db.getUserByOpenId(userInfo.openId);
+        } catch (error) {
+          await db.upsertUser({
+            openId: sessionUserId,
+            name: session.name || "ผู้ใช้งาน",
+            email: sessionUserId.includes("@") ? sessionUserId : null,
+            loginMethod: "session",
+            lastSignedIn: signedInAt,
+          });
+          user = await db.getUserByOpenId(sessionUserId);
+        }
       }
     }
 
