@@ -1,7 +1,8 @@
 # Lifelong-Learning-
 
 ระบบบริหารจัดการหลักสูตรฝึกอบรมระยะสั้นและยานยนต์ไฟฟ้า (EV Training Portal)  
-**มหาวิทยาลัยเทคโนโลยีราชมงคลล้านนา เชียงราย Lifelong Learning**
+**มหาวิทยาลัยเทคโนโลยีราชมงคลล้านนา เชียงราย Lifelong Learning**  
+🌐 **Live Website:** [https://rmutlcr-academy.vercel.app](https://rmutlcr-academy.vercel.app)
 
 ---
 
