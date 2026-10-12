@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Playfair+Display:wght@600;700;800&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background); --color-foreground: var(--foreground); --color-card: var(--card); --color-card-foreground: var(--card-foreground); --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground); --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground); --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground); --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground); --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring);
+}
+:root { --radius: 0.85rem; --background: #f7f8fb; --foreground: #11243d; --card: #ffffff; --card-foreground: #11243d; --popover: #ffffff; --popover-foreground: #11243d; --primary: #0b1f3a; --primary-foreground: #ffffff; --secondary: #edf1f6; --secondary-foreground: #11243d; --muted: #edf1f6; --muted-foreground: #64748b; --accent: #d9ae54; --accent-foreground: #0b1f3a; --border: #e2e8f0; --input: #e2e8f0; --ring: #d9ae54; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: 'Noto Sans Thai', sans-serif; }
+.font-serif { font-family: 'Playfair Display', 'Noto Sans Thai', serif; }
+@layer base { * { @apply border-border outline-ring/50; } button, a { cursor: pointer; } }
+.container { width: 100%; margin-inline: auto; padding-inline: 1rem; }
+@media (min-width: 640px) { .container { padding-inline: 1.5rem; } }
+@media (min-width: 1024px) { .container { max-width: 1280px; padding-inline: 2rem; } }
+::selection { background: #d9ae54; color: #0b1f3a; }
