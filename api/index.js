@@ -838,20 +838,29 @@ var systemRouter = router({
 
 // server/supabaseStore.ts
 import dns from "node:dns/promises";
+var DEFAULT_SUPABASE_URL = "https://ovtflphcqhmmzraqhixd.supabase.co";
+var DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_fcasvASney7Bt3l4qjtAHQ_wNABYk3I";
+function normalizeSupabaseUrl(raw) {
+  return raw.trim().replace(/\/rest\/v1\/?$/i, "").replace(/\/+$/, "");
+}
 var runtimeSupabaseConfig = {
-  url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
-  anonKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
+  url: normalizeSupabaseUrl(
+    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL
+  ),
+  anonKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
   googleClientId: process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ""
 };
 function getSupabaseConfig() {
   return {
-    url: runtimeSupabaseConfig.url || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
-    anonKey: runtimeSupabaseConfig.anonKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
+    url: normalizeSupabaseUrl(
+      runtimeSupabaseConfig.url || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL
+    ),
+    anonKey: runtimeSupabaseConfig.anonKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY,
     googleClientId: runtimeSupabaseConfig.googleClientId || process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ""
   };
 }
 function setSupabaseConfig(config) {
-  if (config.url !== void 0) runtimeSupabaseConfig.url = config.url.trim().replace(/\/+$/, "");
+  if (config.url !== void 0) runtimeSupabaseConfig.url = normalizeSupabaseUrl(config.url);
   if (config.anonKey !== void 0) runtimeSupabaseConfig.anonKey = config.anonKey.trim();
   if (config.googleClientId !== void 0) runtimeSupabaseConfig.googleClientId = config.googleClientId.trim();
   return getSupabaseConfig();
@@ -929,6 +938,13 @@ function seedInitialApplications() {
 }
 seedInitialApplications();
 function fromSupabaseRow(row) {
+  const rawStatus = row.status ?? "pending";
+  const normalizedStatus = rawStatus === "submitted" ? "pending" : rawStatus === "approved" ? "accepted" : ["pending", "reviewing", "accepted", "rejected"].includes(rawStatus) ? rawStatus : "pending";
+  const rawAttendanceStatus = row.attendance_status ?? row.attendanceStatus ?? "not_started";
+  const progress = Number(
+    row.attendance_percent ?? row.attendance_progress ?? row.attendanceProgress ?? 0
+  );
+  const normalizedAttendanceStatus = rawAttendanceStatus === "completed" || progress >= 100 ? "completed" : rawAttendanceStatus === "studying" || progress > 0 ? "studying" : "not_started";
   return {
     id: Number(row.id),
     userId: row.user_id ?? row.userId ?? null,
@@ -940,18 +956,18 @@ function fromSupabaseRow(row) {
     fullName: row.full_name ?? row.fullName ?? "",
     email: (row.email ?? "").toLowerCase(),
     phone: row.phone ?? "",
-    nationalId: row.national_id ?? row.nationalId ?? null,
-    occupation: row.occupation ?? null,
-    experience: row.experience ?? null,
-    message: row.message ?? null,
-    status: row.status ?? "pending",
+    nationalId: row.position ?? row.national_id ?? row.nationalId ?? null,
+    occupation: row.organization ?? row.occupation ?? null,
+    experience: row.motivation ?? row.experience ?? null,
+    message: row.admin_note ?? row.message ?? null,
+    status: normalizedStatus,
     paymentStatus: row.payment_status ?? row.paymentStatus ?? "unpaid",
-    paymentAmount: row.payment_amount ?? row.paymentAmount ?? null,
-    paymentRef: row.payment_ref ?? row.paymentRef ?? null,
+    paymentAmount: Number(row.payment_amount ?? row.paymentAmount ?? 0),
+    paymentRef: row.payment_slip_ref ?? row.payment_ref ?? row.paymentRef ?? null,
     paidAt: row.paid_at ?? row.paidAt ?? null,
-    attendanceProgress: Number(row.attendance_progress ?? row.attendanceProgress ?? 0),
-    attendanceStatus: row.attendance_status ?? row.attendanceStatus ?? "not_started",
-    completedAt: row.completed_at ?? row.completedAt ?? null,
+    attendanceProgress: progress,
+    attendanceStatus: normalizedAttendanceStatus,
+    completedAt: row.completed_at ?? row.completedAt ?? row.certificate_issued_at ?? null,
     certificateIssued: Boolean(row.certificate_issued ?? row.certificateIssued ?? false),
     certificateNo: row.certificate_no ?? row.certificateNo ?? null,
     certificateIssuedAt: row.certificate_issued_at ?? row.certificateIssuedAt ?? null,
@@ -971,21 +987,22 @@ function toSupabaseRow(record) {
     full_name: record.fullName,
     email: record.email.toLowerCase(),
     phone: record.phone,
-    national_id: record.nationalId,
-    occupation: record.occupation,
-    experience: record.experience,
-    message: record.message,
+    organization: record.occupation,
+    position: record.nationalId,
+    province: "\u0E40\u0E0A\u0E35\u0E22\u0E07\u0E23\u0E32\u0E22",
+    motivation: record.experience,
     status: record.status,
     payment_status: record.paymentStatus,
-    payment_amount: record.paymentAmount,
-    payment_ref: record.paymentRef,
+    payment_amount: record.paymentAmount ?? 0,
+    payment_slip_ref: record.paymentRef,
     paid_at: record.paidAt,
-    attendance_progress: record.attendanceProgress,
     attendance_status: record.attendanceStatus,
-    completed_at: record.completedAt,
+    attendance_hours: Math.round(record.attendanceProgress / 100 * 24),
+    attendance_percent: record.attendanceProgress,
     certificate_issued: record.certificateIssued,
     certificate_no: record.certificateNo,
     certificate_issued_at: record.certificateIssuedAt,
+    admin_note: record.message,
     created_at: record.createdAt,
     updated_at: record.updatedAt
   };
@@ -1084,6 +1101,15 @@ async function listAllTraineeApplications(clientCachedRecords) {
 }
 async function createTraineeApplication(input) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (isSupabaseConfigured()) {
+    const maxRows = await supabaseFetch("trainee_applications?select=id&order=id.desc&limit=1");
+    if (Array.isArray(maxRows) && maxRows[0]?.id) {
+      const dbMaxId = Number(maxRows[0].id);
+      if (dbMaxId >= nextAppId) {
+        nextAppId = dbMaxId + 1;
+      }
+    }
+  }
   const id = nextAppId++;
   const record = {
     id,
