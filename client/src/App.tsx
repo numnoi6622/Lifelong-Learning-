@@ -10,6 +10,7 @@ import CourseDetail from "./pages/CourseDetail";
 import ApplyPage from "./pages/ApplyPage";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import AdminPage from "./pages/AdminPage";
 
 function Router() {
   return <Switch>
@@ -19,6 +20,7 @@ function Router() {
     <Route path="/apply/:slug" component={ApplyPage} />
     <Route path="/login" component={LoginPage} />
     <Route path="/dashboard" component={DashboardPage} />
+    <Route path="/admin" component={AdminPage} />
     <Route path="/404" component={NotFound} />
     <Route component={NotFound} />
   </Switch>;

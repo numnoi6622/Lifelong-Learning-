@@ -3,9 +3,22 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { createApplication, getCourseBySlug, getDashboardData, getDb, listCourses, listEvents, upsertUser } from "./db";
+import { createApplication, getCourseBySlug, getDb, listCourses, listEvents, upsertUser } from "./db";
 import { applications, courses, events } from "../drizzle/schema";
 import { sdk } from "./_core/sdk";
+import {
+  createTraineeApplication,
+  deleteTraineeApplication,
+  getSupabaseConfig,
+  isSupabaseConfigured,
+  listAllTraineeApplications,
+  setSupabaseConfig,
+  SUPABASE_SQL_SCHEMA,
+  syncAllToSupabase,
+  testSupabaseConnection,
+  updateTraineeApplication,
+  verifyGoogleEmailAccount,
+} from "./supabaseStore";
 
 const fallbackCourses = [
   {
@@ -163,21 +176,37 @@ export const appRouter = router({
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    getOAuthConfig: publicProcedure.query(() => {
+      const cfg = getSupabaseConfig();
+      return {
+        supabaseUrl: cfg.url,
+        supabaseAnonKey: cfg.anonKey,
+        googleClientId: cfg.googleClientId || "",
+        isSupabaseConfigured: isSupabaseConfigured(),
+      };
+    }),
     loginWithGoogle: publicProcedure
       .input(
         z.object({
           email: z.string().email("กรุณาระบุอีเมลที่ถูกต้อง"),
           name: z.string().optional(),
+          googleAccessToken: z.string().optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const name = input.name?.trim() || input.email.split("@")[0];
-        const openId = `google:${input.email.toLowerCase()}`;
+        const verification = await verifyGoogleEmailAccount(input.email, input.googleAccessToken);
+        if (!verification.valid) {
+          throw new Error(verification.reason || "ไม่พบบัญชี Google นี้ในระบบ กรุณาใช้บัญชี Gmail จริงของคุณ");
+        }
+
+        const verifiedEmail = verification.verifiedEmail || input.email.trim().toLowerCase();
+        const name = verification.verifiedName || input.name?.trim() || verifiedEmail.split("@")[0];
+        const openId = `google:${verifiedEmail}`;
 
         await upsertUser({
           openId,
           name,
-          email: input.email.toLowerCase(),
+          email: verifiedEmail,
           loginMethod: "google",
           lastSignedIn: new Date(),
         });
@@ -199,7 +228,7 @@ export const appRouter = router({
           user: {
             openId,
             name,
-            email: input.email,
+            email: verifiedEmail,
           },
         };
       }),
@@ -226,35 +255,312 @@ export const appRouter = router({
     }),
   }),
   applications: router({
-    create: publicProcedure.input(z.object({
-      courseSlug: z.string().min(1),
-      fullName: z.string().min(2, "กรุณากรอกชื่อ-นามสกุล"),
-      email: z.string().email("กรุณากรอกอีเมลให้ถูกต้อง"),
-      phone: z.string().min(8, "กรุณากรอกเบอร์โทรศัพท์"),
-      occupation: z.string().optional(),
-      experience: z.string().optional(),
-      message: z.string().optional(),
-    })).mutation(async ({ input, ctx }) => {
-      const course = await getCourseBySlug(input.courseSlug) ?? fallbackCourses.find(item => item.slug === input.courseSlug);
-      if (!course) throw new Error("ไม่พบหลักสูตรที่เลือก");
-      const db = await getDb();
-      if (!db || !course.id) return { success: true, demo: true };
-      await createApplication({
-        userId: ctx.user?.id ?? null,
-        courseId: course.id,
-        fullName: input.fullName,
-        email: input.email,
-        phone: input.phone,
-        occupation: input.occupation || null,
-        experience: input.experience || null,
-        message: input.message || null,
-        status: "pending",
-      });
-      return { success: true, demo: false };
-    }),
+    create: publicProcedure
+      .input(
+        z.object({
+          courseSlug: z.string().min(1),
+          fullName: z.string().min(2, "กรุณากรอกชื่อ-นามสกุล"),
+          email: z.string().email("กรุณากรอกอีเมลให้ถูกต้อง"),
+          phone: z.string().min(8, "กรุณากรอกเบอร์โทรศัพท์"),
+          nationalId: z.string().optional(),
+          occupation: z.string().optional(),
+          experience: z.string().optional(),
+          message: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const course =
+          (await getCourseBySlug(input.courseSlug)) ??
+          fallbackCourses.find(item => item.slug === input.courseSlug);
+        if (!course) throw new Error("ไม่พบหลักสูตรที่เลือก");
+
+        const record = await createTraineeApplication({
+          userId: ctx.user?.id ?? null,
+          courseId: course.id,
+          courseSlug: course.slug,
+          courseTitle: course.title,
+          courseDuration: course.duration,
+          courseTuition: course.tuition,
+          fullName: input.fullName,
+          email: ctx.user?.email || input.email,
+          phone: input.phone,
+          nationalId: input.nationalId || null,
+          occupation: input.occupation || null,
+          experience: input.experience || null,
+          message: input.message || null,
+        });
+
+        const db = await getDb();
+        if (db && course.id) {
+          await createApplication({
+            userId: ctx.user?.id ?? null,
+            courseId: course.id,
+            fullName: input.fullName,
+            email: ctx.user?.email || input.email,
+            phone: input.phone,
+            occupation: input.occupation || null,
+            experience: input.experience || null,
+            message: input.message || null,
+            status: "pending",
+          }).catch(() => {});
+        }
+
+        return { success: true, demo: false, application: record };
+      }),
+    submitPayment: publicProcedure
+      .input(
+        z.object({
+          applicationId: z.number(),
+          paymentRef: z.string().min(2, "กรุณาระบุเลขที่อ้างอิงสลิปหรือเวลาโอน"),
+          paymentAmount: z.number().optional(),
+          fallbackRecord: z.any().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const updated = await updateTraineeApplication(
+          input.applicationId,
+          {
+            paymentStatus: "pending_verification",
+            paymentRef: input.paymentRef.trim(),
+            paymentAmount: input.paymentAmount,
+          },
+          input.fallbackRecord
+        );
+        return { success: true, application: updated };
+      }),
   }),
   dashboard: router({
-    overview: protectedProcedure.query(({ ctx }) => getDashboardData(ctx.user.id)),
+    overview: protectedProcedure
+      .input(
+        z
+          .object({
+            cachedApplications: z.array(z.any()).optional(),
+          })
+          .optional()
+      )
+      .query(async ({ ctx, input }) => {
+        const allApps = await listAllTraineeApplications(input?.cachedApplications);
+        const userEmail = (ctx.user.email || ctx.user.openId.replace(/^google:/, "")).toLowerCase();
+
+        const myApps = allApps.filter(
+          app =>
+            app.email.toLowerCase() === userEmail ||
+            (ctx.user.id && app.userId === ctx.user.id)
+        );
+
+        const formattedApplications = myApps.map(app => {
+          const course =
+            fallbackCourses.find(c => c.slug === app.courseSlug || c.id === app.courseId) ?? {
+              id: app.courseId,
+              slug: app.courseSlug,
+              title: app.courseTitle,
+              duration: app.courseDuration,
+              tuition: app.courseTuition,
+              category: "เทคโนโลยีและพลังงาน",
+              mode: "On-site + ภาคปฏิบัติ",
+            };
+          return {
+            application: app,
+            course,
+          };
+        });
+
+        const formattedEnrollments = myApps
+          .filter(
+            app =>
+              app.status === "accepted" ||
+              app.paymentStatus === "paid" ||
+              app.attendanceProgress > 0 ||
+              app.certificateIssued
+          )
+          .map(app => {
+            const course =
+              fallbackCourses.find(c => c.slug === app.courseSlug || c.id === app.courseId) ?? {
+                id: app.courseId,
+                slug: app.courseSlug,
+                title: app.courseTitle,
+                duration: app.courseDuration,
+                tuition: app.courseTuition,
+              };
+            return {
+              enrollment: {
+                id: app.id,
+                userId: ctx.user.id,
+                courseId: app.courseId,
+                status: app.attendanceStatus === "completed" ? "completed" : "enrolled",
+                progress: app.attendanceProgress,
+                startedAt: app.paidAt || app.createdAt,
+                completedAt: app.completedAt,
+                certificateIssued: app.certificateIssued,
+                certificateNo: app.certificateNo,
+                certificateIssuedAt: app.certificateIssuedAt,
+                fullName: app.fullName,
+              },
+              course,
+            };
+          });
+
+        return {
+          applications: formattedApplications,
+          enrollments: formattedEnrollments,
+          events: fallbackEvents,
+          allSyncedApplications: allApps,
+        };
+      }),
+  }),
+  admin: router({
+    listApplications: publicProcedure
+      .input(
+        z
+          .object({
+            cachedApplications: z.array(z.any()).optional(),
+          })
+          .optional()
+      )
+      .query(async ({ input }) => {
+        const items = await listAllTraineeApplications(input?.cachedApplications);
+        const supabaseStatus = await testSupabaseConnection();
+        return {
+          items,
+          stats: {
+            total: items.length,
+            pendingApproval: items.filter(i => i.status === "pending" || i.status === "reviewing").length,
+            accepted: items.filter(i => i.status === "accepted").length,
+            paid: items.filter(i => i.paymentStatus === "paid").length,
+            pendingPayment: items.filter(i => i.paymentStatus === "pending_verification").length,
+            completedAttendance: items.filter(i => i.attendanceProgress >= 100).length,
+            certificatesIssued: items.filter(i => i.certificateIssued).length,
+          },
+          supabaseStatus,
+        };
+      }),
+    updateApplication: publicProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          status: z.enum(["pending", "reviewing", "accepted", "rejected"]).optional(),
+          paymentStatus: z.enum(["unpaid", "pending_verification", "paid"]).optional(),
+          paymentRef: z.string().nullable().optional(),
+          paymentAmount: z.number().nullable().optional(),
+          attendanceProgress: z.number().min(0).max(100).optional(),
+          attendanceStatus: z.enum(["not_started", "studying", "completed"]).optional(),
+          certificateIssued: z.boolean().optional(),
+          fullName: z.string().optional(),
+          phone: z.string().optional(),
+          nationalId: z.string().nullable().optional(),
+          fallbackRecord: z.any().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { id, fallbackRecord, ...patch } = input;
+        const updated = await updateTraineeApplication(id, patch, fallbackRecord);
+        return { success: true, application: updated };
+      }),
+    approveAllAndIssueCertificate: publicProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          fallbackRecord: z.any().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const updated = await updateTraineeApplication(
+          input.id,
+          {
+            status: "accepted",
+            paymentStatus: "paid",
+            attendanceProgress: 100,
+            attendanceStatus: "completed",
+            certificateIssued: true,
+          },
+          input.fallbackRecord
+        );
+        return { success: true, application: updated };
+      }),
+    createTrainee: publicProcedure
+      .input(
+        z.object({
+          courseSlug: z.string().min(1),
+          fullName: z.string().min(2),
+          email: z.string().email(),
+          phone: z.string().min(6),
+          nationalId: z.string().optional(),
+          occupation: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const course =
+          fallbackCourses.find(c => c.slug === input.courseSlug) ?? fallbackCourses[0];
+        const created = await createTraineeApplication({
+          courseId: course.id,
+          courseSlug: course.slug,
+          courseTitle: course.title,
+          courseDuration: course.duration,
+          courseTuition: course.tuition,
+          fullName: input.fullName,
+          email: input.email,
+          phone: input.phone,
+          nationalId: input.nationalId || null,
+          occupation: input.occupation || null,
+        });
+        return { success: true, application: created };
+      }),
+    deleteApplication: publicProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await deleteTraineeApplication(input.id);
+        return { success: true };
+      }),
+    getSupabaseSettings: publicProcedure.query(async () => {
+      const cfg = getSupabaseConfig();
+      const status = await testSupabaseConnection();
+      return {
+        url: cfg.url,
+        hasKey: Boolean(cfg.anonKey),
+        anonKeyPreview: cfg.anonKey ? `${cfg.anonKey.slice(0, 12)}...${cfg.anonKey.slice(-6)}` : "",
+        googleClientId: cfg.googleClientId || "",
+        status,
+        sqlSchema: SUPABASE_SQL_SCHEMA,
+      };
+    }),
+    saveSupabaseSettings: publicProcedure
+      .input(
+        z.object({
+          url: z.string(),
+          anonKey: z.string().optional(),
+          googleClientId: z.string().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        setSupabaseConfig({
+          url: input.url,
+          ...(input.anonKey ? { anonKey: input.anonKey } : {}),
+          ...(input.googleClientId !== undefined ? { googleClientId: input.googleClientId } : {}),
+        });
+        const status = await testSupabaseConnection();
+        if (status.connected) {
+          await syncAllToSupabase();
+        }
+        return { success: true, status };
+      }),
+    syncToSupabase: publicProcedure.mutation(async () => {
+      const result = await syncAllToSupabase();
+      const status = await testSupabaseConnection();
+      return { ...result, status };
+    }),
+  }),
+  certificates: router({
+    getById: publicProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          cachedApplications: z.array(z.any()).optional(),
+        })
+      )
+      .query(async ({ input }) => {
+        const all = await listAllTraineeApplications(input.cachedApplications);
+        return all.find(item => item.id === input.id) ?? null;
+      }),
   }),
 });
 
@@ -262,3 +568,4 @@ export type AppRouter = typeof appRouter;
 void applications;
 void courses;
 void events;
+

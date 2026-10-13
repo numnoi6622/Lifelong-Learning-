@@ -195,16 +195,6 @@ async function createApplication(input) {
   if (!db) throw new Error("Database is not available");
   return db.insert(applications).values(input);
 }
-async function getDashboardData(userId) {
-  const db = await getDb();
-  if (!db) return { applications: [], enrollments: [], events: [] };
-  const [userApplications, userEnrollments, upcomingEvents] = await Promise.all([
-    db.select({ application: applications, course: courses }).from(applications).leftJoin(courses, eq(applications.courseId, courses.id)).where(eq(applications.userId, userId)).orderBy(desc(applications.createdAt)),
-    db.select({ enrollment: enrollments, course: courses }).from(enrollments).leftJoin(courses, eq(enrollments.courseId, courses.id)).where(eq(enrollments.userId, userId)).orderBy(desc(enrollments.startedAt)),
-    db.select().from(events).orderBy(events.startAt)
-  ]);
-  return { applications: userApplications, enrollments: userEnrollments, events: upcomingEvents };
-}
 
 // server/_core/cookies.ts
 function isSecureRequest(req) {
@@ -846,6 +836,529 @@ var systemRouter = router({
   })
 });
 
+// server/supabaseStore.ts
+import dns from "node:dns/promises";
+var runtimeSupabaseConfig = {
+  url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
+  anonKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
+  googleClientId: process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ""
+};
+function getSupabaseConfig() {
+  return {
+    url: runtimeSupabaseConfig.url || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
+    anonKey: runtimeSupabaseConfig.anonKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "",
+    googleClientId: runtimeSupabaseConfig.googleClientId || process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || ""
+  };
+}
+function setSupabaseConfig(config) {
+  if (config.url !== void 0) runtimeSupabaseConfig.url = config.url.trim().replace(/\/+$/, "");
+  if (config.anonKey !== void 0) runtimeSupabaseConfig.anonKey = config.anonKey.trim();
+  if (config.googleClientId !== void 0) runtimeSupabaseConfig.googleClientId = config.googleClientId.trim();
+  return getSupabaseConfig();
+}
+function isSupabaseConfigured() {
+  const cfg = getSupabaseConfig();
+  return Boolean(cfg.url && cfg.anonKey && cfg.url.startsWith("https://"));
+}
+var applicationsMap = /* @__PURE__ */ new Map();
+var nextAppId = 1001;
+function seedInitialApplications() {
+  if (applicationsMap.size > 0) return;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const sample1 = {
+    id: 1001,
+    userId: 1,
+    courseId: 1,
+    courseSlug: "ev-charger-installation",
+    courseTitle: "\u0E01\u0E32\u0E23\u0E15\u0E34\u0E14\u0E15\u0E31\u0E49\u0E07\u0E15\u0E39\u0E49\u0E0A\u0E32\u0E23\u0E4C\u0E08\u0E23\u0E16\u0E44\u0E1F\u0E1F\u0E49\u0E32 (EV Charger Installation)",
+    courseDuration: "3 \u0E27\u0E31\u0E19 (24 \u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07)",
+    courseTuition: 3500,
+    fullName: "\u0E19\u0E32\u0E22\u0E01\u0E34\u0E15\u0E15\u0E34\u0E1E\u0E07\u0E28\u0E4C \u0E40\u0E08\u0E23\u0E34\u0E0D\u0E2A\u0E38\u0E02",
+    email: "kittipong.cr@gmail.com",
+    phone: "081-234-5678",
+    nationalId: "1579900123456",
+    occupation: "\u0E27\u0E34\u0E28\u0E27\u0E01\u0E23\u0E44\u0E1F\u0E1F\u0E49\u0E32 / \u0E1A\u0E23\u0E34\u0E29\u0E31\u0E17 \u0E40\u0E0A\u0E35\u0E22\u0E07\u0E23\u0E32\u0E22\u0E42\u0E0B\u0E25\u0E32\u0E23\u0E4C\u0E41\u0E2D\u0E19\u0E14\u0E4C\u0E2D\u0E35\u0E27\u0E35 \u0E08\u0E33\u0E01\u0E31\u0E14",
+    experience: "\u0E21\u0E35\u0E1E\u0E37\u0E49\u0E19\u0E10\u0E32\u0E19\u0E07\u0E32\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E44\u0E1F\u0E1F\u0E49\u0E32\u0E2D\u0E32\u0E04\u0E32\u0E23 \u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E15\u0E48\u0E2D\u0E22\u0E2D\u0E14\u0E15\u0E34\u0E14\u0E15\u0E31\u0E49\u0E07 EV Charger \u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 PEA",
+    message: "\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E43\u0E1A\u0E01\u0E33\u0E01\u0E31\u0E1A\u0E20\u0E32\u0E29\u0E35\u0E43\u0E19\u0E19\u0E32\u0E21\u0E1A\u0E23\u0E34\u0E29\u0E31\u0E17",
+    status: "accepted",
+    paymentStatus: "paid",
+    paymentAmount: 3500,
+    paymentRef: "KBank-25691012-8841",
+    paidAt: now,
+    attendanceProgress: 100,
+    attendanceStatus: "completed",
+    completedAt: now,
+    certificateIssued: true,
+    certificateNo: "RMUTLCR-EV-2569-0001",
+    certificateIssuedAt: now,
+    createdAt: now,
+    updatedAt: now
+  };
+  const sample2 = {
+    id: 1002,
+    userId: 2,
+    courseId: 2,
+    courseSlug: "ev-repair-maintenance",
+    courseTitle: "\u0E2B\u0E25\u0E31\u0E01\u0E2A\u0E39\u0E15\u0E23\u0E0A\u0E48\u0E32\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E23\u0E16\u0E44\u0E1F\u0E1F\u0E49\u0E32 (EV Repair & Maintenance Program)",
+    courseDuration: "30 \u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07 / 5 \u0E27\u0E31\u0E19",
+    courseTuition: 4900,
+    fullName: "\u0E19\u0E32\u0E07\u0E2A\u0E32\u0E27\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E19\u0E01 \u0E27\u0E07\u0E28\u0E4C\u0E2A\u0E27\u0E31\u0E2A\u0E14\u0E34\u0E4C",
+    email: "pimchanok.ev@gmail.com",
+    phone: "089-876-5432",
+    nationalId: "1509900543210",
+    occupation: "\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E2D\u0E39\u0E48\u0E0B\u0E48\u0E2D\u0E21\u0E23\u0E16\u0E22\u0E19\u0E15\u0E4C / \u0E40\u0E0A\u0E35\u0E22\u0E07\u0E23\u0E32\u0E22\u0E2D\u0E2D\u0E42\u0E15\u0E49\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E27\u0E34\u0E2A",
+    experience: "\u0E0B\u0E48\u0E2D\u0E21\u0E23\u0E16\u0E22\u0E19\u0E15\u0E4C\u0E44\u0E2E\u0E1A\u0E23\u0E34\u0E14\u0E21\u0E32 3 \u0E1B\u0E35 \u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E22\u0E01\u0E23\u0E30\u0E14\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E0A\u0E48\u0E32\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E23\u0E16\u0E44\u0E1F\u0E1F\u0E49\u0E32 BEV \u0E40\u0E15\u0E47\u0E21\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A",
+    message: null,
+    status: "accepted",
+    paymentStatus: "pending_verification",
+    paymentAmount: 4900,
+    paymentRef: "SCB-25691013-1102",
+    paidAt: now,
+    attendanceProgress: 60,
+    attendanceStatus: "studying",
+    completedAt: null,
+    certificateIssued: false,
+    certificateNo: null,
+    certificateIssuedAt: null,
+    createdAt: now,
+    updatedAt: now
+  };
+  applicationsMap.set(sample1.id, sample1);
+  applicationsMap.set(sample2.id, sample2);
+  nextAppId = 1003;
+}
+seedInitialApplications();
+function fromSupabaseRow(row) {
+  return {
+    id: Number(row.id),
+    userId: row.user_id ?? row.userId ?? null,
+    courseId: Number(row.course_id ?? row.courseId ?? 1),
+    courseSlug: row.course_slug ?? row.courseSlug ?? "ev-charger-installation",
+    courseTitle: row.course_title ?? row.courseTitle ?? "\u0E2B\u0E25\u0E31\u0E01\u0E2A\u0E39\u0E15\u0E23\u0E2D\u0E1A\u0E23\u0E21",
+    courseDuration: row.course_duration ?? row.courseDuration ?? "24 \u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07",
+    courseTuition: Number(row.course_tuition ?? row.courseTuition ?? 0),
+    fullName: row.full_name ?? row.fullName ?? "",
+    email: (row.email ?? "").toLowerCase(),
+    phone: row.phone ?? "",
+    nationalId: row.national_id ?? row.nationalId ?? null,
+    occupation: row.occupation ?? null,
+    experience: row.experience ?? null,
+    message: row.message ?? null,
+    status: row.status ?? "pending",
+    paymentStatus: row.payment_status ?? row.paymentStatus ?? "unpaid",
+    paymentAmount: row.payment_amount ?? row.paymentAmount ?? null,
+    paymentRef: row.payment_ref ?? row.paymentRef ?? null,
+    paidAt: row.paid_at ?? row.paidAt ?? null,
+    attendanceProgress: Number(row.attendance_progress ?? row.attendanceProgress ?? 0),
+    attendanceStatus: row.attendance_status ?? row.attendanceStatus ?? "not_started",
+    completedAt: row.completed_at ?? row.completedAt ?? null,
+    certificateIssued: Boolean(row.certificate_issued ?? row.certificateIssued ?? false),
+    certificateNo: row.certificate_no ?? row.certificateNo ?? null,
+    certificateIssuedAt: row.certificate_issued_at ?? row.certificateIssuedAt ?? null,
+    createdAt: row.created_at ?? row.createdAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    updatedAt: row.updated_at ?? row.updatedAt ?? (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function toSupabaseRow(record) {
+  return {
+    id: record.id,
+    user_id: record.userId,
+    course_id: record.courseId,
+    course_slug: record.courseSlug,
+    course_title: record.courseTitle,
+    course_duration: record.courseDuration,
+    course_tuition: record.courseTuition,
+    full_name: record.fullName,
+    email: record.email.toLowerCase(),
+    phone: record.phone,
+    national_id: record.nationalId,
+    occupation: record.occupation,
+    experience: record.experience,
+    message: record.message,
+    status: record.status,
+    payment_status: record.paymentStatus,
+    payment_amount: record.paymentAmount,
+    payment_ref: record.paymentRef,
+    paid_at: record.paidAt,
+    attendance_progress: record.attendanceProgress,
+    attendance_status: record.attendanceStatus,
+    completed_at: record.completedAt,
+    certificate_issued: record.certificateIssued,
+    certificate_no: record.certificateNo,
+    certificate_issued_at: record.certificateIssuedAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt
+  };
+}
+async function supabaseFetch(path, options = {}) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.url || !cfg.anonKey) return null;
+  const url = `${cfg.url}/rest/v1/${path}`;
+  const headers = {
+    apikey: cfg.anonKey,
+    Authorization: `Bearer ${cfg.anonKey}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+    ...options.headers
+  };
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    console.warn(`[Supabase] ${options.method || "GET"} ${path} failed (${response.status}):`, errText);
+    return null;
+  }
+  const text2 = await response.text();
+  if (!text2) return [];
+  try {
+    return JSON.parse(text2);
+  } catch {
+    return null;
+  }
+}
+async function testSupabaseConnection() {
+  if (!isSupabaseConfigured()) {
+    return {
+      connected: false,
+      message: "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E30\u0E1A\u0E38 SUPABASE_URL \u0E2B\u0E23\u0E37\u0E2D SUPABASE_ANON_KEY"
+    };
+  }
+  try {
+    const rows = await supabaseFetch("trainee_applications?select=*&limit=50");
+    if (rows === null) {
+      return {
+        connected: false,
+        message: "\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D Supabase \u0E44\u0E14\u0E49 \u0E41\u0E15\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E15\u0E32\u0E23\u0E32\u0E07 trainee_applications (\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E31\u0E19\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 SQL \u0E14\u0E49\u0E32\u0E19\u0E25\u0E48\u0E32\u0E07\u0E43\u0E19 Supabase SQL Editor)"
+      };
+    }
+    return {
+      connected: true,
+      message: `\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D Supabase \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! \u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E1A\u0E23\u0E21 ${Array.isArray(rows) ? rows.length : 0} \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23`,
+      count: Array.isArray(rows) ? rows.length : 0
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      message: `\u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D Supabase: ${String(err)}`
+    };
+  }
+}
+async function syncAllToSupabase() {
+  if (!isSupabaseConfigured()) return { synced: 0, connected: false };
+  const all = Array.from(applicationsMap.values());
+  let synced = 0;
+  for (const item of all) {
+    const res = await supabaseFetch("trainee_applications", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(toSupabaseRow(item))
+    });
+    if (res) synced++;
+  }
+  return { synced, connected: true };
+}
+async function listAllTraineeApplications(clientCachedRecords) {
+  if (Array.isArray(clientCachedRecords)) {
+    for (const rec of clientCachedRecords) {
+      if (rec && typeof rec.id === "number" && rec.email) {
+        const existing = applicationsMap.get(rec.id);
+        if (!existing || new Date(rec.updatedAt) > new Date(existing.updatedAt)) {
+          applicationsMap.set(rec.id, rec);
+          if (rec.id >= nextAppId) nextAppId = rec.id + 1;
+        }
+      }
+    }
+  }
+  if (isSupabaseConfigured()) {
+    const rows = await supabaseFetch("trainee_applications?select=*&order=created_at.desc");
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        const mapped = fromSupabaseRow(row);
+        applicationsMap.set(mapped.id, mapped);
+        if (mapped.id >= nextAppId) nextAppId = mapped.id + 1;
+      }
+    }
+  }
+  return Array.from(applicationsMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+async function createTraineeApplication(input) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const id = nextAppId++;
+  const record = {
+    id,
+    userId: input.userId ?? null,
+    courseId: input.courseId,
+    courseSlug: input.courseSlug,
+    courseTitle: input.courseTitle,
+    courseDuration: input.courseDuration,
+    courseTuition: input.courseTuition,
+    fullName: input.fullName.trim(),
+    email: input.email.trim().toLowerCase(),
+    phone: input.phone.trim(),
+    nationalId: input.nationalId?.trim() || null,
+    occupation: input.occupation?.trim() || null,
+    experience: input.experience?.trim() || null,
+    message: input.message?.trim() || null,
+    status: "pending",
+    paymentStatus: input.courseTuition === 0 ? "paid" : "unpaid",
+    paymentAmount: input.courseTuition,
+    paymentRef: null,
+    paidAt: input.courseTuition === 0 ? now : null,
+    attendanceProgress: 0,
+    attendanceStatus: "not_started",
+    completedAt: null,
+    certificateIssued: false,
+    certificateNo: null,
+    certificateIssuedAt: null,
+    createdAt: now,
+    updatedAt: now
+  };
+  applicationsMap.set(id, record);
+  if (isSupabaseConfigured()) {
+    await supabaseFetch("trainee_applications", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(toSupabaseRow(record))
+    });
+  }
+  return record;
+}
+function generateCertificateNumber(courseSlug, id) {
+  const prefix = courseSlug.startsWith("ev-") ? "RMUTLCR-EV" : "RMUTLCR-LL";
+  const buddhistYear = (/* @__PURE__ */ new Date()).getFullYear() + 543;
+  const paddedId = String(id).padStart(4, "0");
+  return `${prefix}-${buddhistYear}-${paddedId}`;
+}
+async function updateTraineeApplication(id, patch, fallbackRecord) {
+  let existing = applicationsMap.get(id) || fallbackRecord;
+  if (!existing && isSupabaseConfigured()) {
+    const rows = await supabaseFetch(`trainee_applications?id=eq.${id}&select=*`);
+    if (Array.isArray(rows) && rows[0]) {
+      existing = fromSupabaseRow(rows[0]);
+    }
+  }
+  if (!existing) {
+    throw new Error("\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E1A\u0E2A\u0E21\u0E31\u0E04\u0E23\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E1A\u0E23\u0E21\u0E19\u0E35\u0E49");
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const updated = {
+    ...existing,
+    ...patch,
+    updatedAt: now
+  };
+  if (patch.paymentStatus === "paid" && !updated.paidAt) {
+    updated.paidAt = now;
+  }
+  if (patch.attendanceProgress !== void 0) {
+    updated.attendanceProgress = Math.max(0, Math.min(100, patch.attendanceProgress));
+    if (updated.attendanceProgress >= 100) {
+      updated.attendanceStatus = "completed";
+      if (!updated.completedAt) updated.completedAt = now;
+    } else if (updated.attendanceProgress > 0) {
+      updated.attendanceStatus = "studying";
+    } else {
+      updated.attendanceStatus = "not_started";
+    }
+  }
+  if (patch.attendanceStatus === "completed") {
+    updated.attendanceProgress = 100;
+    if (!updated.completedAt) updated.completedAt = now;
+  }
+  if (patch.certificateIssued === true) {
+    updated.certificateIssued = true;
+    updated.status = "accepted";
+    updated.attendanceProgress = 100;
+    updated.attendanceStatus = "completed";
+    if (!updated.completedAt) updated.completedAt = now;
+    if (!updated.certificateNo) {
+      updated.certificateNo = generateCertificateNumber(updated.courseSlug, updated.id);
+    }
+    if (!updated.certificateIssuedAt) {
+      updated.certificateIssuedAt = now;
+    }
+  } else if (patch.certificateIssued === false) {
+    updated.certificateIssued = false;
+  }
+  applicationsMap.set(id, updated);
+  if (isSupabaseConfigured()) {
+    await supabaseFetch("trainee_applications", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify(toSupabaseRow(updated))
+    });
+  }
+  return updated;
+}
+async function deleteTraineeApplication(id) {
+  applicationsMap.delete(id);
+  if (isSupabaseConfigured()) {
+    await supabaseFetch(`trainee_applications?id=eq.${id}`, {
+      method: "DELETE"
+    });
+  }
+  return true;
+}
+var BLOCKED_FAKE_USERNAMES = /* @__PURE__ */ new Set([
+  "test",
+  "testing",
+  "user",
+  "admin",
+  "abc",
+  "abcd",
+  "abcde",
+  "abcdef",
+  "123",
+  "1234",
+  "12345",
+  "123456",
+  "1234567",
+  "12345678",
+  "123456789",
+  "aaa",
+  "aaaa",
+  "aaaaa",
+  "aaaaaa",
+  "asdf",
+  "asdfgh",
+  "qwerty",
+  "none",
+  "null",
+  "fake",
+  "demo",
+  "example",
+  "mygoogle",
+  "sample"
+]);
+async function verifyGoogleEmailAccount(email, googleAccessToken) {
+  const cleanEmail = email.trim().toLowerCase();
+  if (googleAccessToken) {
+    try {
+      const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${googleAccessToken}` }
+      });
+      if (userInfoRes.ok) {
+        const profile = await userInfoRes.json();
+        if (profile.email) {
+          return {
+            valid: true,
+            verifiedEmail: profile.email.toLowerCase(),
+            verifiedName: profile.name || profile.email.split("@")[0]
+          };
+        }
+      }
+    } catch {
+    }
+  }
+  const parts = cleanEmail.split("@");
+  if (parts.length !== 2) {
+    return { valid: false, reason: "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07" };
+  }
+  const [localPart, domain] = parts;
+  const isGmail = domain === "gmail.com" || domain === "googlemail.com";
+  const isAcademic = domain.endsWith(".ac.th") || domain.endsWith(".edu");
+  if (BLOCKED_FAKE_USERNAMES.has(localPart) || /^(.)\1{4,}$/.test(localPart)) {
+    return {
+      valid: false,
+      reason: `\u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E43\u0E0A\u0E49\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E2B\u0E23\u0E37\u0E2D\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E08\u0E33\u0E25\u0E2D\u0E07 (${cleanEmail}) \u0E44\u0E14\u0E49 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E43\u0E0A\u0E49\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E08\u0E23\u0E34\u0E07\u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13`
+    };
+  }
+  if (isGmail) {
+    if (localPart.length < 6 || localPart.length > 30) {
+      return {
+        valid: false,
+        reason: "\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E08\u0E23\u0E34\u0E07\u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49 (\u0E2B\u0E19\u0E49\u0E32 @gmail.com) \u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E15\u0E31\u0E49\u0E07\u0E41\u0E15\u0E48 6 \u0E16\u0E36\u0E07 30 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23 \u0E15\u0E32\u0E21\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E02\u0E2D\u0E07 Google"
+      };
+    }
+    if (!/^[a-z0-9.]+$/.test(localPart) || localPart.startsWith(".") || localPart.endsWith(".") || localPart.includes("..")) {
+      return {
+        valid: false,
+        reason: "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E0A\u0E37\u0E48\u0E2D\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07\u0E15\u0E32\u0E21\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 Google (\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30 a-z, 0-9 \u0E41\u0E25\u0E30\u0E08\u0E38\u0E14 . \u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19)"
+      };
+    }
+    if (/^\d+$/.test(localPart)) {
+      return {
+        valid: false,
+        reason: "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E17\u0E35\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E25\u0E49\u0E27\u0E19 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E08\u0E23\u0E34\u0E07\u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13"
+      };
+    }
+  } else if (!isAcademic) {
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      const hasGoogleMx = mxRecords.some(
+        (r) => r.exchange.toLowerCase().includes("google.com") || r.exchange.toLowerCase().includes("googlemail.com")
+      );
+      if (!hasGoogleMx) {
+        return {
+          valid: false,
+          reason: `\u0E42\u0E14\u0E40\u0E21\u0E19 @${domain} \u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D\u0E01\u0E31\u0E1A\u0E23\u0E30\u0E1A\u0E1A\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Google (Gmail / Google Workspace) \u0E01\u0E23\u0E38\u0E13\u0E32\u0E43\u0E0A\u0E49\u0E2D\u0E35\u0E40\u0E21\u0E25 @gmail.com \u0E2B\u0E23\u0E37\u0E2D\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E21\u0E2B\u0E32\u0E27\u0E34\u0E17\u0E22\u0E32\u0E25\u0E31\u0E22 (@rmutl.ac.th)`
+        };
+      }
+    } catch {
+      return {
+        valid: false,
+        reason: `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E40\u0E0B\u0E34\u0E23\u0E4C\u0E1F\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E02\u0E2D\u0E07\u0E42\u0E14\u0E40\u0E21\u0E19 @${domain} \u0E01\u0E23\u0E38\u0E13\u0E32\u0E43\u0E0A\u0E49\u0E2D\u0E35\u0E40\u0E21\u0E25 @gmail.com \u0E17\u0E35\u0E48\u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48\u0E08\u0E23\u0E34\u0E07`
+      };
+    }
+  } else {
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      if (!mxRecords || mxRecords.length === 0) {
+        return { valid: false, reason: `\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E02\u0E2D\u0E07\u0E42\u0E14\u0E40\u0E21\u0E19 @${domain}` };
+      }
+    } catch {
+      return { valid: false, reason: `\u0E42\u0E14\u0E40\u0E21\u0E19 @${domain} \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48\u0E08\u0E23\u0E34\u0E07\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E34\u0E19\u0E40\u0E17\u0E2D\u0E23\u0E4C\u0E40\u0E19\u0E47\u0E15` };
+    }
+  }
+  return { valid: true, verifiedEmail: cleanEmail };
+}
+var SUPABASE_SQL_SCHEMA = `-- \u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 SQL \u0E19\u0E35\u0E49\u0E44\u0E1B\u0E23\u0E31\u0E19\u0E43\u0E19 Supabase SQL Editor (https://supabase.com/dashboard)
+-- \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E15\u0E32\u0E23\u0E32\u0E07\u0E40\u0E01\u0E47\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E1A\u0E23\u0E21 \u0E01\u0E32\u0E23\u0E0A\u0E33\u0E23\u0E30\u0E40\u0E07\u0E34\u0E19 \u0E01\u0E32\u0E23\u0E40\u0E02\u0E49\u0E32\u0E40\u0E23\u0E35\u0E22\u0E19 \u0E41\u0E25\u0E30\u0E43\u0E1A\u0E1B\u0E23\u0E30\u0E01\u0E32\u0E28\u0E19\u0E35\u0E22\u0E1A\u0E31\u0E15\u0E23\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C
+
+CREATE TABLE IF NOT EXISTS public.trainee_applications (
+  id BIGINT PRIMARY KEY,
+  user_id BIGINT,
+  course_id INTEGER NOT NULL,
+  course_slug TEXT NOT NULL,
+  course_title TEXT NOT NULL,
+  course_duration TEXT NOT NULL,
+  course_tuition INTEGER NOT NULL DEFAULT 0,
+  full_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  national_id TEXT,
+  occupation TEXT,
+  experience TEXT,
+  message TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  payment_status TEXT NOT NULL DEFAULT 'unpaid',
+  payment_amount INTEGER DEFAULT 0,
+  payment_ref TEXT,
+  paid_at TIMESTAMPTZ,
+  attendance_progress INTEGER NOT NULL DEFAULT 0,
+  attendance_status TEXT NOT NULL DEFAULT 'not_started',
+  completed_at TIMESTAMPTZ,
+  certificate_issued BOOLEAN NOT NULL DEFAULT FALSE,
+  certificate_no TEXT,
+  certificate_issued_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- \u0E40\u0E1B\u0E34\u0E14\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E43\u0E2B\u0E49\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E48\u0E32\u0E19\u0E41\u0E25\u0E30\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E48\u0E32\u0E19 API \u0E44\u0E14\u0E49
+ALTER TABLE public.trainee_applications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public full access to trainee_applications" ON public.trainee_applications;
+CREATE POLICY "Allow public full access to trainee_applications"
+  ON public.trainee_applications
+  FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+CREATE INDEX IF NOT EXISTS idx_trainee_applications_email ON public.trainee_applications(email);
+CREATE INDEX IF NOT EXISTS idx_trainee_applications_certificate_no ON public.trainee_applications(certificate_no);
+`;
+
 // server/routers.ts
 var fallbackCourses = [
   {
@@ -1001,18 +1514,33 @@ var appRouter = router({
   system: systemRouter,
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+    getOAuthConfig: publicProcedure.query(() => {
+      const cfg = getSupabaseConfig();
+      return {
+        supabaseUrl: cfg.url,
+        supabaseAnonKey: cfg.anonKey,
+        googleClientId: cfg.googleClientId || "",
+        isSupabaseConfigured: isSupabaseConfigured()
+      };
+    }),
     loginWithGoogle: publicProcedure.input(
       z2.object({
         email: z2.string().email("\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07"),
-        name: z2.string().optional()
+        name: z2.string().optional(),
+        googleAccessToken: z2.string().optional()
       })
     ).mutation(async ({ input, ctx }) => {
-      const name = input.name?.trim() || input.email.split("@")[0];
-      const openId = `google:${input.email.toLowerCase()}`;
+      const verification = await verifyGoogleEmailAccount(input.email, input.googleAccessToken);
+      if (!verification.valid) {
+        throw new Error(verification.reason || "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Google \u0E19\u0E35\u0E49\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E01\u0E23\u0E38\u0E13\u0E32\u0E43\u0E0A\u0E49\u0E1A\u0E31\u0E0D\u0E0A\u0E35 Gmail \u0E08\u0E23\u0E34\u0E07\u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13");
+      }
+      const verifiedEmail = verification.verifiedEmail || input.email.trim().toLowerCase();
+      const name = verification.verifiedName || input.name?.trim() || verifiedEmail.split("@")[0];
+      const openId = `google:${verifiedEmail}`;
       await upsertUser({
         openId,
         name,
-        email: input.email.toLowerCase(),
+        email: verifiedEmail,
         loginMethod: "google",
         lastSignedIn: /* @__PURE__ */ new Date()
       });
@@ -1031,7 +1559,7 @@ var appRouter = router({
         user: {
           openId,
           name,
-          email: input.email
+          email: verifiedEmail
         }
       };
     }),
@@ -1058,35 +1586,269 @@ var appRouter = router({
     })
   }),
   applications: router({
-    create: publicProcedure.input(z2.object({
-      courseSlug: z2.string().min(1),
-      fullName: z2.string().min(2, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25"),
-      email: z2.string().email("\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07"),
-      phone: z2.string().min(8, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E40\u0E1A\u0E2D\u0E23\u0E4C\u0E42\u0E17\u0E23\u0E28\u0E31\u0E1E\u0E17\u0E4C"),
-      occupation: z2.string().optional(),
-      experience: z2.string().optional(),
-      message: z2.string().optional()
-    })).mutation(async ({ input, ctx }) => {
+    create: publicProcedure.input(
+      z2.object({
+        courseSlug: z2.string().min(1),
+        fullName: z2.string().min(2, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25"),
+        email: z2.string().email("\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07"),
+        phone: z2.string().min(8, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E40\u0E1A\u0E2D\u0E23\u0E4C\u0E42\u0E17\u0E23\u0E28\u0E31\u0E1E\u0E17\u0E4C"),
+        nationalId: z2.string().optional(),
+        occupation: z2.string().optional(),
+        experience: z2.string().optional(),
+        message: z2.string().optional()
+      })
+    ).mutation(async ({ input, ctx }) => {
       const course = await getCourseBySlug(input.courseSlug) ?? fallbackCourses.find((item) => item.slug === input.courseSlug);
       if (!course) throw new Error("\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E2B\u0E25\u0E31\u0E01\u0E2A\u0E39\u0E15\u0E23\u0E17\u0E35\u0E48\u0E40\u0E25\u0E37\u0E2D\u0E01");
-      const db = await getDb();
-      if (!db || !course.id) return { success: true, demo: true };
-      await createApplication({
+      const record = await createTraineeApplication({
         userId: ctx.user?.id ?? null,
         courseId: course.id,
+        courseSlug: course.slug,
+        courseTitle: course.title,
+        courseDuration: course.duration,
+        courseTuition: course.tuition,
         fullName: input.fullName,
-        email: input.email,
+        email: ctx.user?.email || input.email,
         phone: input.phone,
+        nationalId: input.nationalId || null,
         occupation: input.occupation || null,
         experience: input.experience || null,
-        message: input.message || null,
-        status: "pending"
+        message: input.message || null
       });
-      return { success: true, demo: false };
+      const db = await getDb();
+      if (db && course.id) {
+        await createApplication({
+          userId: ctx.user?.id ?? null,
+          courseId: course.id,
+          fullName: input.fullName,
+          email: ctx.user?.email || input.email,
+          phone: input.phone,
+          occupation: input.occupation || null,
+          experience: input.experience || null,
+          message: input.message || null,
+          status: "pending"
+        }).catch(() => {
+        });
+      }
+      return { success: true, demo: false, application: record };
+    }),
+    submitPayment: publicProcedure.input(
+      z2.object({
+        applicationId: z2.number(),
+        paymentRef: z2.string().min(2, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E23\u0E30\u0E1A\u0E38\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07\u0E2A\u0E25\u0E34\u0E1B\u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E27\u0E25\u0E32\u0E42\u0E2D\u0E19"),
+        paymentAmount: z2.number().optional(),
+        fallbackRecord: z2.any().optional()
+      })
+    ).mutation(async ({ input }) => {
+      const updated = await updateTraineeApplication(
+        input.applicationId,
+        {
+          paymentStatus: "pending_verification",
+          paymentRef: input.paymentRef.trim(),
+          paymentAmount: input.paymentAmount
+        },
+        input.fallbackRecord
+      );
+      return { success: true, application: updated };
     })
   }),
   dashboard: router({
-    overview: protectedProcedure.query(({ ctx }) => getDashboardData(ctx.user.id))
+    overview: protectedProcedure.input(
+      z2.object({
+        cachedApplications: z2.array(z2.any()).optional()
+      }).optional()
+    ).query(async ({ ctx, input }) => {
+      const allApps = await listAllTraineeApplications(input?.cachedApplications);
+      const userEmail = (ctx.user.email || ctx.user.openId.replace(/^google:/, "")).toLowerCase();
+      const myApps = allApps.filter(
+        (app2) => app2.email.toLowerCase() === userEmail || ctx.user.id && app2.userId === ctx.user.id
+      );
+      const formattedApplications = myApps.map((app2) => {
+        const course = fallbackCourses.find((c) => c.slug === app2.courseSlug || c.id === app2.courseId) ?? {
+          id: app2.courseId,
+          slug: app2.courseSlug,
+          title: app2.courseTitle,
+          duration: app2.courseDuration,
+          tuition: app2.courseTuition,
+          category: "\u0E40\u0E17\u0E04\u0E42\u0E19\u0E42\u0E25\u0E22\u0E35\u0E41\u0E25\u0E30\u0E1E\u0E25\u0E31\u0E07\u0E07\u0E32\u0E19",
+          mode: "On-site + \u0E20\u0E32\u0E04\u0E1B\u0E0F\u0E34\u0E1A\u0E31\u0E15\u0E34"
+        };
+        return {
+          application: app2,
+          course
+        };
+      });
+      const formattedEnrollments = myApps.filter(
+        (app2) => app2.status === "accepted" || app2.paymentStatus === "paid" || app2.attendanceProgress > 0 || app2.certificateIssued
+      ).map((app2) => {
+        const course = fallbackCourses.find((c) => c.slug === app2.courseSlug || c.id === app2.courseId) ?? {
+          id: app2.courseId,
+          slug: app2.courseSlug,
+          title: app2.courseTitle,
+          duration: app2.courseDuration,
+          tuition: app2.courseTuition
+        };
+        return {
+          enrollment: {
+            id: app2.id,
+            userId: ctx.user.id,
+            courseId: app2.courseId,
+            status: app2.attendanceStatus === "completed" ? "completed" : "enrolled",
+            progress: app2.attendanceProgress,
+            startedAt: app2.paidAt || app2.createdAt,
+            completedAt: app2.completedAt,
+            certificateIssued: app2.certificateIssued,
+            certificateNo: app2.certificateNo,
+            certificateIssuedAt: app2.certificateIssuedAt,
+            fullName: app2.fullName
+          },
+          course
+        };
+      });
+      return {
+        applications: formattedApplications,
+        enrollments: formattedEnrollments,
+        events: fallbackEvents,
+        allSyncedApplications: allApps
+      };
+    })
+  }),
+  admin: router({
+    listApplications: publicProcedure.input(
+      z2.object({
+        cachedApplications: z2.array(z2.any()).optional()
+      }).optional()
+    ).query(async ({ input }) => {
+      const items = await listAllTraineeApplications(input?.cachedApplications);
+      const supabaseStatus = await testSupabaseConnection();
+      return {
+        items,
+        stats: {
+          total: items.length,
+          pendingApproval: items.filter((i) => i.status === "pending" || i.status === "reviewing").length,
+          accepted: items.filter((i) => i.status === "accepted").length,
+          paid: items.filter((i) => i.paymentStatus === "paid").length,
+          pendingPayment: items.filter((i) => i.paymentStatus === "pending_verification").length,
+          completedAttendance: items.filter((i) => i.attendanceProgress >= 100).length,
+          certificatesIssued: items.filter((i) => i.certificateIssued).length
+        },
+        supabaseStatus
+      };
+    }),
+    updateApplication: publicProcedure.input(
+      z2.object({
+        id: z2.number(),
+        status: z2.enum(["pending", "reviewing", "accepted", "rejected"]).optional(),
+        paymentStatus: z2.enum(["unpaid", "pending_verification", "paid"]).optional(),
+        paymentRef: z2.string().nullable().optional(),
+        paymentAmount: z2.number().nullable().optional(),
+        attendanceProgress: z2.number().min(0).max(100).optional(),
+        attendanceStatus: z2.enum(["not_started", "studying", "completed"]).optional(),
+        certificateIssued: z2.boolean().optional(),
+        fullName: z2.string().optional(),
+        phone: z2.string().optional(),
+        nationalId: z2.string().nullable().optional(),
+        fallbackRecord: z2.any().optional()
+      })
+    ).mutation(async ({ input }) => {
+      const { id, fallbackRecord, ...patch } = input;
+      const updated = await updateTraineeApplication(id, patch, fallbackRecord);
+      return { success: true, application: updated };
+    }),
+    approveAllAndIssueCertificate: publicProcedure.input(
+      z2.object({
+        id: z2.number(),
+        fallbackRecord: z2.any().optional()
+      })
+    ).mutation(async ({ input }) => {
+      const updated = await updateTraineeApplication(
+        input.id,
+        {
+          status: "accepted",
+          paymentStatus: "paid",
+          attendanceProgress: 100,
+          attendanceStatus: "completed",
+          certificateIssued: true
+        },
+        input.fallbackRecord
+      );
+      return { success: true, application: updated };
+    }),
+    createTrainee: publicProcedure.input(
+      z2.object({
+        courseSlug: z2.string().min(1),
+        fullName: z2.string().min(2),
+        email: z2.string().email(),
+        phone: z2.string().min(6),
+        nationalId: z2.string().optional(),
+        occupation: z2.string().optional()
+      })
+    ).mutation(async ({ input }) => {
+      const course = fallbackCourses.find((c) => c.slug === input.courseSlug) ?? fallbackCourses[0];
+      const created = await createTraineeApplication({
+        courseId: course.id,
+        courseSlug: course.slug,
+        courseTitle: course.title,
+        courseDuration: course.duration,
+        courseTuition: course.tuition,
+        fullName: input.fullName,
+        email: input.email,
+        phone: input.phone,
+        nationalId: input.nationalId || null,
+        occupation: input.occupation || null
+      });
+      return { success: true, application: created };
+    }),
+    deleteApplication: publicProcedure.input(z2.object({ id: z2.number() })).mutation(async ({ input }) => {
+      await deleteTraineeApplication(input.id);
+      return { success: true };
+    }),
+    getSupabaseSettings: publicProcedure.query(async () => {
+      const cfg = getSupabaseConfig();
+      const status = await testSupabaseConnection();
+      return {
+        url: cfg.url,
+        hasKey: Boolean(cfg.anonKey),
+        anonKeyPreview: cfg.anonKey ? `${cfg.anonKey.slice(0, 12)}...${cfg.anonKey.slice(-6)}` : "",
+        googleClientId: cfg.googleClientId || "",
+        status,
+        sqlSchema: SUPABASE_SQL_SCHEMA
+      };
+    }),
+    saveSupabaseSettings: publicProcedure.input(
+      z2.object({
+        url: z2.string(),
+        anonKey: z2.string().optional(),
+        googleClientId: z2.string().optional()
+      })
+    ).mutation(async ({ input }) => {
+      setSupabaseConfig({
+        url: input.url,
+        ...input.anonKey ? { anonKey: input.anonKey } : {},
+        ...input.googleClientId !== void 0 ? { googleClientId: input.googleClientId } : {}
+      });
+      const status = await testSupabaseConnection();
+      if (status.connected) {
+        await syncAllToSupabase();
+      }
+      return { success: true, status };
+    }),
+    syncToSupabase: publicProcedure.mutation(async () => {
+      const result = await syncAllToSupabase();
+      const status = await testSupabaseConnection();
+      return { ...result, status };
+    })
+  }),
+  certificates: router({
+    getById: publicProcedure.input(
+      z2.object({
+        id: z2.number(),
+        cachedApplications: z2.array(z2.any()).optional()
+      })
+    ).query(async ({ input }) => {
+      const all = await listAllTraineeApplications(input.cachedApplications);
+      return all.find((item) => item.id === input.id) ?? null;
+    })
   })
 });
 

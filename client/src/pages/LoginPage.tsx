@@ -32,18 +32,10 @@ export default function LoginPage() {
   const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [googleEmail, setGoogleEmail] = useState("");
   const [googleName, setGoogleName] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Check URL params for direct modal trigger
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("google_modal") === "1" || params.get("google") === "1") {
-        setAgreed(true);
-        setGoogleModalOpen(true);
-      }
-    }
-  }, []);
+  const { data: oauthConfig } = trpc.auth.getOAuthConfig.useQuery();
 
   const loginWithGoogleMutation = trpc.auth.loginWithGoogle.useMutation({
     onSuccess: async (data) => {
@@ -54,27 +46,111 @@ export default function LoginPage() {
       } catch {
         // ignore storage errors
       }
-      toast.success(`เข้าสู่ระบบสำเร็จในชื่อ ${data.user.name} (${data.user.email})`);
+      setLoginError(null);
+      toast.success(`ยืนยันบัญชี Google สำเร็จ: ${data.user.name} (${data.user.email})`);
       await utils.auth.me.invalidate();
       setGoogleModalOpen(false);
       setLocation("/dashboard");
     },
     onError: (err) => {
-      toast.error(err.message || "เกิดข้อผิดพลาดในการเข้าสู่ระบบ");
+      const msg = err.message || "ไม่สามารถยืนยันบัญชี Google นี้ได้";
+      setLoginError(msg);
+      toast.error(msg);
       setIsSubmitting(false);
     },
   });
 
+  // Check URL params or Supabase/Google OAuth hash callback (#access_token=...)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("google_modal") === "1" || params.get("google") === "1") {
+      setAgreed(true);
+      setGoogleModalOpen(true);
+    }
+
+    // Handle OAuth redirect hash from Supabase Google Auth or Google Implicit OAuth
+    if (window.location.hash && window.location.hash.includes("access_token=")) {
+      const hashParams = new URLSearchParams(window.location.hash.slice(1));
+      const accessToken = hashParams.get("access_token");
+      const providerToken = hashParams.get("provider_token") || accessToken;
+      if (accessToken) {
+        setIsSubmitting(true);
+        fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+          headers: { Authorization: `Bearer ${providerToken}` },
+        })
+          .then(res => (res.ok ? res.json() : null))
+          .then(profile => {
+            if (profile && profile.email) {
+              window.history.replaceState(null, "", window.location.pathname);
+              loginWithGoogleMutation.mutate({
+                email: profile.email,
+                name: profile.name || profile.email.split("@")[0],
+                googleAccessToken: providerToken || undefined,
+              });
+            } else if (oauthConfig?.supabaseUrl && oauthConfig?.supabaseAnonKey) {
+              return fetch(`${oauthConfig.supabaseUrl}/auth/v1/user`, {
+                headers: {
+                  apikey: oauthConfig.supabaseAnonKey,
+                  Authorization: `Bearer ${accessToken}`,
+                },
+              })
+                .then(r => (r.ok ? r.json() : null))
+                .then(supaUser => {
+                  if (supaUser?.email) {
+                    window.history.replaceState(null, "", window.location.pathname);
+                    loginWithGoogleMutation.mutate({
+                      email: supaUser.email,
+                      name: supaUser.user_metadata?.full_name || supaUser.email.split("@")[0],
+                    });
+                  } else {
+                    setIsSubmitting(false);
+                  }
+                });
+            } else {
+              setIsSubmitting(false);
+            }
+          })
+          .catch(() => setIsSubmitting(false));
+      }
+    }
+  }, [oauthConfig?.supabaseUrl, oauthConfig?.supabaseAnonKey]);
+
+  const handleRealOAuthRedirect = () => {
+    if (oauthConfig?.supabaseUrl) {
+      const redirectTo = encodeURIComponent(`${window.location.origin}/login`);
+      window.location.href = `${oauthConfig.supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`;
+      return;
+    }
+    if (oauthConfig?.googleClientId) {
+      const redirectUri = encodeURIComponent(`${window.location.origin}/login`);
+      const scope = encodeURIComponent("openid email profile");
+      window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${oauthConfig.googleClientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}&prompt=select_account`;
+      return;
+    }
+    window.location.href = "/api/auth/google";
+  };
+
   const handleQuickGoogleLogin = async (emailToUse?: string, nameToUse?: string) => {
+    setLoginError(null);
     if (!agreed) {
       toast.warning("กรุณาคลิกยอมรับข้อกำหนดและเงื่อนไขการสมัครสมาชิกก่อน");
       return;
     }
-    const finalEmail = (emailToUse || googleEmail || "user@gmail.com").trim();
-    const finalName = (nameToUse || googleName || finalEmail.split("@")[0]).trim();
+    const finalEmail = (emailToUse ?? googleEmail).trim().toLowerCase();
+    const finalName = (nameToUse ?? googleName).trim();
 
-    if (!finalEmail.includes("@")) {
-      toast.error("กรุณากรอกอีเมล Google ให้ถูกต้อง");
+    if (!finalEmail || !finalEmail.includes("@")) {
+      const msg = "กรุณากรอกที่อยู่อีเมล Google (@gmail.com) ของคุณ";
+      setLoginError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    if (!finalName || finalName.length < 2) {
+      const msg = "กรุณากรอกชื่อ-นามสกุลจริงของคุณ (เพื่อใช้ในการออกใบประกาศนียบัตร)";
+      setLoginError(msg);
+      toast.error(msg);
       return;
     }
 
@@ -87,6 +163,7 @@ export default function LoginPage() {
 
   const handleGoogleButtonClick = () => {
     if (!agreed) return;
+    setLoginError(null);
     setGoogleModalOpen(true);
   };
 
@@ -95,7 +172,6 @@ export default function LoginPage() {
     toast.info("ระบบกำลังเชื่อมต่อบริการ ThaiD (DOPA)...", {
       description: "กำลังส่งต่อไปยังระบบพิสูจน์และยืนยันตัวตนทางดิจิทัล",
     });
-    // In production this connects to https://training.ubu.ac.th/thd/oauth.php
     setTimeout(() => {
       window.open("https://www.ubu.ac.th/web/kmubu/km/content-392/", "_blank");
     }, 1200);
@@ -437,14 +513,12 @@ export default function LoginPage() {
                     คู่มือผู้เข้าอบรม
                   </a>
                   <span>|</span>
-                  <a
-                    href="https://docs.google.com/document/d/1gVFlLFkz-fxbu65HyvvHie9OzBDBns5RnF3xhDRgySM/edit?usp=sharing"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:text-slate-600 underline"
+                  <Link
+                    href="/admin"
+                    className="font-semibold text-[#7b1313] hover:underline"
                   >
-                    คู่มือผู้ดูแลระบบ
-                  </a>
+                    ระบบจัดการหลังบ้าน (Admin)
+                  </Link>
                 </div>
               </div>
             </div>
@@ -452,7 +526,7 @@ export default function LoginPage() {
         </div>
       </main>
 
-      {/* Google Account Login Modal ("เข้าระบบ ด้วย google ของฉัน") */}
+      {/* Google Account Login Modal */}
       {googleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="relative w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl border border-slate-100">
@@ -470,79 +544,90 @@ export default function LoginPage() {
               </div>
               <div>
                 <h3 className="font-serif text-xl font-bold text-slate-900">
-                  ลงชื่อเข้าใช้ด้วย Google
+                  ยืนยันตัวตนด้วยบัญชี Google (Gmail)
                 </h3>
                 <p className="text-xs text-slate-500">
-                  ดำเนินการต่อด้วยบัญชี Google ของคุณ
+                  ระบบตรวจสอบบัญชี Gmail จริงและผูกกับประวัติการอบรมอัตโนมัติ
                 </p>
               </div>
             </div>
 
-            <div className="mt-6 space-y-4">
-              {/* Option A: One-click fast login */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                  ตัวเลือกที่ 1: เข้าสู่ระบบด่วน
+            <div className="mt-5 space-y-4">
+              {loginError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs font-medium text-red-700 leading-relaxed">
+                  ⚠️ {loginError}
                 </div>
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => handleQuickGoogleLogin("mygoogle@gmail.com", "ผู้เรียน มทร.ล้านนา เชียงราย")}
-                  className="flex w-full items-center justify-center gap-3 rounded-xl bg-[#DD4B39] py-3 text-sm font-bold text-white shadow hover:bg-[#c23321] transition-all disabled:opacity-50"
-                >
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-white text-xs font-bold text-[#DD4B39]">
-                    G
-                  </span>
-                  {isSubmitting ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบด้วยบัญชี Google ของฉัน"}
-                </button>
-              </div>
+              )}
 
-              {/* Option B: Enter custom Google email */}
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
-                  ตัวเลือกที่ 2: ระบุอีเมล Google / Gmail ของคุณ
+              {/* Real Gmail Form with MX & Format Verification */}
+              <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50/40">
+                <div className="text-xs font-bold text-[#7b1313] mb-3 flex items-center gap-1.5">
+                  <ShieldCheck size={15} /> กรอกบัญชี Google (Gmail) จริงของคุณ
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs font-semibold text-slate-700">อีเมล Google (Gmail)</label>
+                    <label className="text-xs font-semibold text-slate-700">
+                      ชื่อ-นามสกุลจริง (ใช้แสดงบนใบประกาศนียบัตร) <span className="text-red-500">*</span>
+                    </label>
                     <input
-                      type="email"
-                      placeholder="เช่น yourname@gmail.com"
-                      value={googleEmail}
-                      onChange={(e) => setGoogleEmail(e.target.value)}
+                      type="text"
+                      placeholder="เช่น นายสมชาย ใจดี"
+                      value={googleName}
+                      onChange={(e) => {
+                        setGoogleName(e.target.value);
+                        setLoginError(null);
+                      }}
                       className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-[#7b1313] focus:ring-2 focus:ring-[#7b1313]/20"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-slate-700">ชื่อ-นามสกุล (ไม่บังคับ)</label>
+                    <label className="text-xs font-semibold text-slate-700">
+                      บัญชีอีเมล Google (@gmail.com หรือ @rmutl.ac.th) <span className="text-red-500">*</span>
+                    </label>
                     <input
-                      type="text"
-                      placeholder="เช่น สมชาย ใจดี"
-                      value={googleName}
-                      onChange={(e) => setGoogleName(e.target.value)}
+                      type="email"
+                      placeholder="เช่น somchai.rmutl@gmail.com"
+                      value={googleEmail}
+                      onChange={(e) => {
+                        setGoogleEmail(e.target.value);
+                        setLoginError(null);
+                      }}
                       className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-[#7b1313] focus:ring-2 focus:ring-[#7b1313]/20"
                     />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      * ระบบจะตรวจสอบโครงสร้างบัญชี Gmail จริงและเซิร์ฟเวอร์ Google Mail (MX Record) โดยไม่อนุญาตอีเมลจำลอง
+                    </p>
                   </div>
+
                   <button
                     type="button"
-                    disabled={isSubmitting || !googleEmail}
+                    disabled={isSubmitting || !googleEmail || !googleName}
                     onClick={() => handleQuickGoogleLogin(googleEmail, googleName)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#DD4B39] py-3.5 text-sm font-bold text-white shadow hover:bg-[#c23321] transition-colors disabled:opacity-50"
                   >
-                    ยืนยันเข้าสู่ระบบด้วยอีเมลนี้ <ArrowRight size={15} />
+                    <span className="grid h-5 w-5 place-items-center rounded-full bg-white text-xs font-bold text-[#DD4B39]">
+                      G
+                    </span>
+                    {isSubmitting ? "กำลังตรวจสอบบัญชีกับ Google..." : "ยืนยันเข้าสู่ระบบด้วยบัญชี Gmail"}
                   </button>
                 </div>
               </div>
 
-              {/* Option C: Direct OAuth Link */}
-              <div className="pt-2 text-center">
-                <a
-                  href="/api/auth/google"
-                  className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-[#7b1313] hover:underline"
-                >
-                  <ShieldCheck size={14} /> หรือเชื่อมต่อผ่าน Google OAuth Portal (API)
-                </a>
-              </div>
+              {/* Direct OAuth Redirect (Supabase Google Auth / Google Cloud OAuth) */}
+              {(oauthConfig?.supabaseUrl || oauthConfig?.googleClientId) && (
+                <div className="rounded-2xl border border-slate-200 p-4 text-center">
+                  <div className="text-xs text-slate-500 mb-2">
+                    หรือลงชื่อเข้าใช้ผ่านหน้าต่างรับรองสิทธิ์ของ Google OAuth 2.0 โดยตรง
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRealOAuthRedirect}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    <ExternalLink size={14} /> ลงชื่อเข้าใช้ผ่าน Google OAuth (Supabase Auth)
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -551,7 +636,7 @@ export default function LoginPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-8 text-center text-xs text-slate-500">
         <div className="container">
-          <p>© 2567 มหาวิทยาลัยเทคโนโลยีราชมงคลล้านนา เชียงราย Lifelong Learning. All rights reserved.</p>
+          <p>© 2569 มหาวิทยาลัยเทคโนโลยีราชมงคลล้านนา เชียงราย Lifelong Learning. All rights reserved.</p>
           <p className="mt-1 text-[11px] text-slate-400">
             ระบบบริหารจัดการหลักสูตรฝึกอบรมระยะสั้นและการเรียนรู้ตลอดชีวิต
           </p>
