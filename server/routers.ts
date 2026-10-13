@@ -100,7 +100,7 @@ const fallbackCourses = [
     duration: "30 ชั่วโมง / 5 วัน",
     mode: "ภาคปฏิบัติจริง + Workshop",
     tuition: 4900,
-    imageUrl: "/assets/ev-training/banner.png",
+    imageUrl: "/assets/ev-training/gallery/20.jpg",
     nextStartAt: new Date("2026-11-10T09:00:00Z"),
   },
   {
@@ -122,7 +122,7 @@ const fallbackCourses = [
     duration: "6 ชั่วโมง (1 วัน)",
     mode: "On-site + Hybrid",
     tuition: 990,
-    imageUrl: "/assets/ev-training/banner.png",
+    imageUrl: "/assets/ev-training/gallery/40.jpg",
     nextStartAt: new Date("2026-10-28T09:00:00Z"),
   },
   {
@@ -135,7 +135,7 @@ const fallbackCourses = [
     duration: "2 วัน",
     mode: "On-site + Workshop",
     tuition: 4500,
-    imageUrl: "/manus-storage/academy-hero_7f64e6db.jpg",
+    imageUrl: "/assets/ev-training/gallery/30.jpg",
     nextStartAt: new Date("2026-10-17T09:00:00Z"),
   },
   {
@@ -148,7 +148,7 @@ const fallbackCourses = [
     duration: "1 วัน",
     mode: "On-site",
     tuition: 2800,
-    imageUrl: "/manus-storage/academy-community_43f6f064.jpg",
+    imageUrl: "/assets/ev-training/gallery/12.jpg",
     nextStartAt: new Date("2026-11-07T09:00:00Z"),
   },
   {
@@ -161,7 +161,7 @@ const fallbackCourses = [
     duration: "2 วัน",
     mode: "Hybrid",
     tuition: 3600,
-    imageUrl: "/manus-storage/academy-hero_7f64e6db.jpg",
+    imageUrl: "/assets/ev-training/gallery/5.jpg",
     nextStartAt: new Date("2026-12-05T09:00:00Z"),
   },
 ];

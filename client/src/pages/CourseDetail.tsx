@@ -55,9 +55,15 @@ export default function CourseDetail() {
               </div>
             </div>
             <img
-              src={course.imageUrl ?? "/manus-storage/academy-community_43f6f064.jpg"}
+              src={course.imageUrl ?? "/assets/ev-training/banner.png"}
               alt={course.title}
               className="aspect-[4/3] w-full rounded-[2rem] object-cover shadow-2xl border-2 border-white/20"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (target.src !== window.location.origin + "/assets/ev-training/banner.png") {
+                  target.src = "/assets/ev-training/banner.png";
+                }
+              }}
             />
           </div>
         </section>
@@ -86,6 +92,40 @@ export default function CourseDetail() {
                   <span className="text-sm leading-6 text-slate-700">{item}</span>
                 </div>
               ))}
+            </div>
+
+            {/* บรรยากาศการเรียนจริงที่ มทร.ล้านนา เชียงราย */}
+            <div className="mt-12 rounded-3xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm">
+              <h3 className="font-serif text-2xl font-bold text-[#7b1313]">
+                บรรยากาศการฝึกอบรมจริง ณ มทร.ล้านนา เชียงราย
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                เรียนรู้ทั้งภาคทฤษฎีในห้องเรียน และการฝึกปฏิบัติกับรถยนต์ไฟฟ้าและชุดฝึกจำลองจริง
+              </p>
+              <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[
+                  { src: "/assets/ev-training/gallery/20.jpg", caption: "การตรวจวินิจฉัยระบบรถไฟฟ้า" },
+                  { src: "/assets/ev-training/gallery/12.jpg", caption: "การตรวจวัดชุดแบตเตอรี่แรงดันสูง" },
+                  { src: "/assets/ev-training/gallery/5.jpg", caption: "การฝึกปฏิบัติระบบห้องเครื่องยนต์ EV" },
+                  { src: "/assets/ev-training/gallery/30.jpg", caption: "การบรรยายภาคทฤษฎีในห้องอบรม" },
+                  { src: "/assets/ev-training/gallery/40.jpg", caption: "การมอบใบประกาศนียบัตรรับรอง" },
+                  { src: "/assets/ev-training/gallery/1.jpg", caption: "เครื่องมือทดสอบมาตรฐานความปลอดภัย" },
+                ].map((photo, idx) => (
+                  <div key={idx} className="group overflow-hidden rounded-2xl border border-slate-200/60 bg-slate-50">
+                    <img
+                      src={photo.src}
+                      alt={photo.caption}
+                      className="h-36 sm:h-44 w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      onError={(e) => {
+                        e.currentTarget.src = "/assets/ev-training/banner.png";
+                      }}
+                    />
+                    <div className="p-2 text-center text-xs font-medium text-slate-600 line-clamp-1">
+                      {photo.caption}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </article>
 

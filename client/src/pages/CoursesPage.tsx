@@ -71,9 +71,15 @@ export default function CoursesPage() {
             : courses.map(course => (
               <article key={course.slug} className="group overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl">
                 <img
-                  src={course.imageUrl ?? "/manus-storage/academy-community_43f6f064.jpg"}
+                  src={course.imageUrl ?? "/assets/ev-training/banner.png"}
                   alt={course.title}
                   className="h-52 w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.src !== window.location.origin + "/assets/ev-training/banner.png") {
+                      target.src = "/assets/ev-training/banner.png";
+                    }
+                  }}
                 />
                 <div className="p-6">
                   <div className="flex items-center justify-between gap-3 text-xs">
